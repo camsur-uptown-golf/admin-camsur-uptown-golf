@@ -1,0 +1,13 @@
+{
+  "name": "admin-camsuruptowngolf",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Clubhouse Office — admin dashboard ng CamSur Uptown Golf (bookings, call-backs, newsletter, members).",
+  "type": "module",
+  "scripts": {
+    "start": "node server.mjs"
+  },
+  "engines": {
+    "node": ">=22.5"
+  }
+}

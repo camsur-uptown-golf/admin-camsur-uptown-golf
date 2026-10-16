@@ -1,0 +1,3 @@
+# Mga admin account (password hash at session). Huwag i-commit.
+/data/
+.DS_Store
