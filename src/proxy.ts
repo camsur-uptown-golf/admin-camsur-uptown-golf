@@ -6,6 +6,12 @@ import { NextResponse, type NextRequest } from "next/server";
  *   - ang POST/PATCH ay dapat galing sa pahinang ito mismo (pangontra sa CSRF).
  */
 export function proxy(request: NextRequest) {
+  /* Ang mga larawan sa public/ ay kinukuha rin ng image optimizer sa loob ng
+     server — walang "localhost" na Host ang request na iyon, kaya kapag
+     hinarang ay sira ang logo ("isn't a valid image … received null").
+     Hindi sapat ang `matcher` sa ibaba para dito, kaya dito na rin sinusuri. */
+  if (/\.(?:png|jpe?g|webp|svg|ico)$/i.test(request.nextUrl.pathname)) return NextResponse.next();
+
   const host = request.headers.get("host") ?? "";
   const hostname = host.replace(/:\d+$/, "");
   if (hostname !== "localhost" && hostname !== "127.0.0.1") {
