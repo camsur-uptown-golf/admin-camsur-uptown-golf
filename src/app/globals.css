@@ -41,9 +41,10 @@
   --series-bookings: #1f7a4a;
   --series-callbacks: #b8892b;
 
-  --display: "Cormorant SC", "Cormorant Garamond", Georgia, serif;
-  --serif: "Cormorant Garamond", Georgia, serif;
-  --sans: "Manrope", "Avenir Next", "Segoe UI", sans-serif;
+  /* Galing sa next/font (app/layout.tsx). */
+  --display: var(--font-cormorant-sc), var(--font-cormorant), Georgia, serif;
+  --serif: var(--font-cormorant), Georgia, serif;
+  --sans: var(--font-manrope), "Avenir Next", "Segoe UI", sans-serif;
 
   --radius: 14px;
   --shadow: 0 1px 0 rgba(10, 36, 24, 0.04), 0 10px 30px -18px rgba(10, 36, 24, 0.35);
@@ -1225,9 +1226,15 @@ td.num {
   background: var(--st-confirmed-bg);
   color: var(--st-confirmed);
 }
-.pill.closed {
+.pill.closed,
+.pill.expired,
+.pill.cancelled {
   background: var(--st-closed-bg);
   color: var(--st-closed);
+}
+.pill.held {
+  background: var(--st-new-bg);
+  color: var(--st-new);
 }
 
 .list-foot {

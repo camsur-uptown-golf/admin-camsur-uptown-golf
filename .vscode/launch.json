@@ -3,14 +3,13 @@
   "configurations": [
     {
       "name": "Admin dashboard",
-      "type": "node",
+      "type": "node-terminal",
       "request": "launch",
-      "program": "${workspaceFolder}/server.mjs",
+      "command": "npm run dev",
       "cwd": "${workspaceFolder}",
-      "console": "integratedTerminal",
       "serverReadyAction": {
-        "pattern": "(http://localhost:\\d+)",
-        "uriFormat": "%s",
+        "pattern": "(http://(?:localhost|127\\.0\\.0\\.1):\\d+)",
+        "uriFormat": "http://localhost:4000",
         "action": "openExternally"
       }
     }

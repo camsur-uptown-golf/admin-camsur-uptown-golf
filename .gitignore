@@ -1,3 +1,8 @@
 # Mga admin account (password hash at session). Huwag i-commit.
 /data/
 .DS_Store
+
+/node_modules/
+/.next/
+next-env.d.ts
+*.tsbuildinfo

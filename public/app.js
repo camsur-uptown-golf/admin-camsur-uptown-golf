@@ -161,6 +161,7 @@ async function api(path, { method = "GET", body } = {}) {
     });
     const data = await res.json().catch(() => ({}));
     return { ok: res.ok, status: res.status, data };
+  
   } catch {
     return { ok: false, status: 0, data: { error: "Can't reach the admin server. Is it still running?" } };
   }
@@ -216,7 +217,7 @@ function renderAuth(mode, message = "") {
         <div class="auth-headline">
           <div class="eyebrow rule">Bookings · Enquiries · Members</div>
           <h1>The Clubhouse Office</h1>
-          <p>Every villa booking, call-back and new member, kept in one ledger.</p>
+      
         </div>
       </section>
       <section class="auth-panel">
