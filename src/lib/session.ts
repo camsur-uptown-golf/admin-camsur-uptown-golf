@@ -1,4 +1,4 @@
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { SESSION_COOKIE, SESSION_HOURS, adminFromSession } from "./auth.ts";
 import type { Admin } from "./types.ts";
 
@@ -12,9 +12,18 @@ export async function sessionToken(): Promise<string | undefined> {
   return (await cookies()).get(SESSION_COOKIE)?.value;
 }
 
+/* HTTPS (Vercel): Secure ang cookie. Sa http://127.0.0.1:4000 hindi, dahil
+   hindi ito ibabalik ng browser sa http. */
+async function overHttps(): Promise<boolean> {
+  const proto = (await headers()).get("x-forwarded-proto")?.split(",")[0]?.trim();
+  return proto === "https" || process.env.VERCEL === "1";
+}
+
 export async function setSessionCookie(token: string): Promise<void> {
+  const secure = await overHttps();
   (await cookies()).set(SESSION_COOKIE, token, {
     httpOnly: true,
+    secure,
     sameSite: "strict",
     path: "/",
     maxAge: SESSION_HOURS * 3600,
@@ -22,7 +31,7 @@ export async function setSessionCookie(token: string): Promise<void> {
 }
 
 export async function clearSessionCookie(): Promise<void> {
-  (await cookies()).delete(SESSION_COOKIE);
+  (await cookies()).set(SESSION_COOKIE, "", { httpOnly: true, secure: await overHttps(), sameSite: "strict", path: "/", maxAge: 0 });
 }
 
 /* ---------- Para sa mga route handler ---------- */

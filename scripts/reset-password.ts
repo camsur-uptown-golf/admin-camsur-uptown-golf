@@ -5,6 +5,9 @@ import { listAdmins, passwordProblem, setAdminPassword } from "../src/lib/auth.t
  * Bagong password para sa admin na nakalimutan ang dati:
  *   npm run reset-password
  * Hindi lumalabas sa screen ang tina-type na password.
+ * Kapag may TURSO_DATABASE_URL sa .env.local, ang account sa Turso ang
+ * napapalitan (iyon ang ginagamit ng dashboard sa Vercel); kung wala, ang
+ * lokal na data/admin.sqlite.
  */
 
 function ask(question: string, { hidden = false } = {}): Promise<string> {
@@ -24,7 +27,7 @@ function ask(question: string, { hidden = false } = {}): Promise<string> {
   });
 }
 
-const admins = listAdmins();
+const admins = await listAdmins();
 if (!admins.length) {
   console.log("\n  Wala pang admin. Patakbuhin ang `npm run dev` at gumawa sa browser.\n");
   process.exit(0);
@@ -48,8 +51,10 @@ if ((await ask("  Ulitin ang password: ", { hidden: true })) !== password) {
   process.exit(1);
 }
 
-if (!setAdminPassword(username, password)) {
+if (!(await setAdminPassword(username, password))) {
   console.log(`\n  Walang admin na "${username}". Walang binago.\n`);
   process.exit(1);
 }
-console.log(`\n  Napalitan na ang password ni ${username}. Mag-login ulit sa http://localhost:4000\n`);
+console.log(`\n  Napalitan na ang password ni ${username}. Mag-login ulit sa dashboard.\n`);
+/* Isinasara ang koneksyon sa Turso para makalabas agad. */
+process.exit(0);

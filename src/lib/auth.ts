@@ -1,15 +1,14 @@
-import { DatabaseSync } from "node:sqlite";
+import type { Client, Row } from "@libsql/client";
 import { createHash, randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
-import { mkdirSync } from "node:fs";
-import path from "node:path";
+import { db } from "./db.ts";
 import type { Admin } from "./types.ts";
 
 /**
  * Mga admin account at session ng admin dashboard.
  *
- * Nasa sariling folder ng admin (`admin-camsuruptowngolf/data/admin.sqlite`),
- * hindi sa site: hiwalay sa mga miyembro, kaya hindi kailanman makakapag-login
- * sa admin ang isang miyembro.
+ * Hiwalay sa mga miyembro (sariling `admins` table — sa Turso, o sa
+ * `admin-camsuruptowngolf/data/admin.sqlite` kapag lokal), kaya hindi
+ * kailanman makakapag-login sa admin ang isang miyembro.
  *
  * Kapareho ng members-db ang paraan: scrypt na may sariling salt ang bawat
  * password, at SHA-256 lang ng session token ang nasa database.
@@ -17,10 +16,7 @@ import type { Admin } from "./types.ts";
  * NAKALIMUTAN ANG PASSWORD:  npm run reset-password
  */
 
-const DATA_DIR = path.join(process.cwd(), "data");
-const DB_FILE = path.join(DATA_DIR, "admin.sqlite");
-
-export const SESSION_COOKIE = "cu-admin";
+export { SESSION_COOKIE } from "./session-cookie.ts";
 /* Isang araw ng trabaho — mas maikli kaysa sa miyembro dahil mas sensitibo
    ang nakikita rito (pangalan, email at numero ng lahat ng bisita). */
 export const SESSION_HOURS = 12;
@@ -36,13 +32,14 @@ type AdminRow = {
   last_login_at: string | null;
 };
 
-const cache = globalThis as unknown as { __adminDb?: DatabaseSync };
+/* Isang beses lang bawat process ang paggawa ng mga table. */
+const cache = globalThis as unknown as { __adminSchema?: Promise<void> };
 
-function db(): DatabaseSync {
-  if (!cache.__adminDb) {
-    mkdirSync(DATA_DIR, { recursive: true });
-    const connection = new DatabaseSync(DB_FILE);
-    connection.exec(`
+async function adminDb(): Promise<Client> {
+  const client = db("admin");
+  cache.__adminSchema ??= client
+    .executeMultiple(
+      `
       PRAGMA foreign_keys = ON;
       CREATE TABLE IF NOT EXISTS admins (
         id             INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -58,11 +55,25 @@ function db(): DatabaseSync {
         created_at  TEXT    NOT NULL,
         expires_at  TEXT    NOT NULL
       );
-    `);
-    cache.__adminDb = connection;
-  }
-  return cache.__adminDb;
+    `,
+    )
+    .catch((error: unknown) => {
+      /* Subukan ulit sa susunod na request kapag pumalya (hal. walang token). */
+      cache.__adminSchema = undefined;
+      throw error;
+    });
+  await cache.__adminSchema;
+  return client;
 }
+
+const toRow = (row: Row): AdminRow => ({
+  id: Number(row.id),
+  username: String(row.username),
+  name: String(row.name),
+  password_hash: String(row.password_hash),
+  created_at: String(row.created_at),
+  last_login_at: row.last_login_at === null || row.last_login_at === undefined ? null : String(row.last_login_at),
+});
 
 /* ---------- Password ---------- */
 
@@ -99,16 +110,29 @@ export function passwordProblem(password: unknown): string | null {
 
 const toAdmin = (row: AdminRow): Admin => ({ id: row.id, username: row.username, name: row.name, lastLoginAt: row.last_login_at });
 
-export function adminCount(): number {
-  return Number((db().prepare("SELECT COUNT(*) AS n FROM admins").get() as { n: number }).n);
+export async function adminCount(): Promise<number> {
+  const result = await (await adminDb()).execute("SELECT COUNT(*) AS n FROM admins");
+  return Number(result.rows[0]?.n ?? 0);
 }
 
-/** `null` kapag may account na ang username. */
-export function createAdmin({ username, name, password }: { username: string; name: string; password: string }): Admin | null {
+/**
+ * `null` kapag may account na ang username. Sa `firstOnly`, `null` din kapag
+ * may admin na — iisang statement, kaya hindi makakalusot ang dalawang sabay
+ * na setup.
+ */
+export async function createAdmin(
+  { username, name, password }: { username: string; name: string; password: string },
+  { firstOnly = false } = {},
+): Promise<Admin | null> {
   try {
-    const result = db()
-      .prepare("INSERT INTO admins (username, name, password_hash, created_at) VALUES (?, ?, ?, ?)")
-      .run(username, name, hashPassword(password), new Date().toISOString());
+    const result = await (
+      await adminDb()
+    ).execute({
+      sql: `INSERT INTO admins (username, name, password_hash, created_at) SELECT ?, ?, ?, ?
+             WHERE ? = 0 OR NOT EXISTS (SELECT 1 FROM admins)`,
+      args: [username, name, hashPassword(password), new Date().toISOString(), firstOnly ? 1 : 0],
+    });
+    if (result.rowsAffected === 0) return null;
     return { id: Number(result.lastInsertRowid), username, name, lastLoginAt: null };
   } catch (error) {
     if (error instanceof Error && /UNIQUE/.test(error.message)) return null;
@@ -117,26 +141,37 @@ export function createAdmin({ username, name, password }: { username: string; na
 }
 
 /** Bagong password at tanggal lahat ng session. `false` kapag walang ganoong username. */
-export function setAdminPassword(username: string, password: string): boolean {
-  const row = db().prepare("SELECT id FROM admins WHERE username = ?").get(username) as { id: number } | undefined;
+export async function setAdminPassword(username: string, password: string): Promise<boolean> {
+  const client = await adminDb();
+  const found = await client.execute({ sql: "SELECT id FROM admins WHERE username = ?", args: [username] });
+  const row = found.rows[0];
   if (!row) return false;
-  db().prepare("UPDATE admins SET password_hash = ? WHERE id = ?").run(hashPassword(password), row.id);
-  db().prepare("DELETE FROM admin_sessions WHERE admin_id = ?").run(row.id);
+  const id = Number(row.id);
+  await client.batch(
+    [
+      { sql: "UPDATE admins SET password_hash = ? WHERE id = ?", args: [hashPassword(password), id] },
+      { sql: "DELETE FROM admin_sessions WHERE admin_id = ?", args: [id] },
+    ],
+    "write",
+  );
   return true;
 }
 
-export function listAdmins(): Admin[] {
-  return (db().prepare("SELECT * FROM admins ORDER BY id").all() as AdminRow[]).map(toAdmin);
+export async function listAdmins(): Promise<Admin[]> {
+  const result = await (await adminDb()).execute("SELECT * FROM admins ORDER BY id");
+  return result.rows.map((row) => toAdmin(toRow(row)));
 }
 
-export function authenticate(username: string, password: string): Admin | null {
-  const row = db().prepare("SELECT * FROM admins WHERE username = ?").get(username) as AdminRow | undefined;
+export async function authenticate(username: string, password: string): Promise<Admin | null> {
+  const client = await adminDb();
+  const found = await client.execute({ sql: "SELECT * FROM admins WHERE username = ?", args: [username] });
+  const row = found.rows[0] ? toRow(found.rows[0]) : undefined;
   if (!row) {
     verifyPassword(password, (dummyHash ??= hashPassword(randomBytes(16).toString("hex"))));
     return null;
   }
   if (!verifyPassword(password, row.password_hash)) return null;
-  db().prepare("UPDATE admins SET last_login_at = ? WHERE id = ?").run(new Date().toISOString(), row.id);
+  await client.execute({ sql: "UPDATE admins SET last_login_at = ? WHERE id = ?", args: [new Date().toISOString(), row.id] });
   /* Ang naunang pag-login ang ipinapakita ("Last sign-in"), hindi ang ngayon. */
   return toAdmin(row);
 }
@@ -145,35 +180,45 @@ export function authenticate(username: string, password: string): Admin | null {
 
 const sha256 = (value: string) => createHash("sha256").update(value).digest("hex");
 
-export function createSession(adminId: number): string {
+export async function createSession(adminId: number): Promise<string> {
   const token = randomBytes(32).toString("base64url");
   const now = new Date();
   const expiresAt = new Date(now.getTime() + SESSION_HOURS * 3_600_000);
-  db().prepare("DELETE FROM admin_sessions WHERE expires_at < ?").run(now.toISOString());
-  db()
-    .prepare("INSERT INTO admin_sessions (token_hash, admin_id, created_at, expires_at) VALUES (?, ?, ?, ?)")
-    .run(sha256(token), adminId, now.toISOString(), expiresAt.toISOString());
+  await (
+    await adminDb()
+  ).batch(
+    [
+      { sql: "DELETE FROM admin_sessions WHERE expires_at < ?", args: [now.toISOString()] },
+      {
+        sql: "INSERT INTO admin_sessions (token_hash, admin_id, created_at, expires_at) VALUES (?, ?, ?, ?)",
+        args: [sha256(token), adminId, now.toISOString(), expiresAt.toISOString()],
+      },
+    ],
+    "write",
+  );
   return token;
 }
 
-export function adminFromSession(token: string | undefined): Admin | null {
+export async function adminFromSession(token: string | undefined): Promise<Admin | null> {
   if (!token) return null;
-  const row = db()
-    .prepare(
-      `SELECT a.* FROM admin_sessions s JOIN admins a ON a.id = s.admin_id
-       WHERE s.token_hash = ? AND s.expires_at > ?`,
-    )
-    .get(sha256(token), new Date().toISOString()) as AdminRow | undefined;
-  return row ? toAdmin(row) : null;
+  const result = await (
+    await adminDb()
+  ).execute({
+    sql: `SELECT a.* FROM admin_sessions s JOIN admins a ON a.id = s.admin_id
+           WHERE s.token_hash = ? AND s.expires_at > ?`,
+    args: [sha256(token), new Date().toISOString()],
+  });
+  return result.rows[0] ? toAdmin(toRow(result.rows[0])) : null;
 }
 
-export function deleteSession(token: string | undefined): void {
-  if (token) db().prepare("DELETE FROM admin_sessions WHERE token_hash = ?").run(sha256(token));
+export async function deleteSession(token: string | undefined): Promise<void> {
+  if (token) await (await adminDb()).execute({ sql: "DELETE FROM admin_sessions WHERE token_hash = ?", args: [sha256(token)] });
 }
 
 /* ---------- Limit sa maling pag-login ---------- */
 
-/* Sa memorya lang — sapat dahil iisang process at localhost lang ito. */
+/* Sa memorya lang. Sa Vercel, bawat instance ay may sariling bilang — mas
+   maluwag nang kaunti, pero mahaba (10+) at scrypt ang password. */
 const WINDOW_MS = 15 * 60_000;
 const MAX_FAILURES = 5;
 const failureCache = globalThis as unknown as { __adminFailures?: Map<string, { count: number; first: number }> };

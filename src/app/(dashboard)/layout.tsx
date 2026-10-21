@@ -12,7 +12,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
   if (!admin) redirect("/login");
 
   return (
-    <DashboardProvider admin={admin} initialData={dashboardData()}>
+    <DashboardProvider admin={admin} initialData={await dashboardData()}>
       <div className="shell">
         <Sidebar />
         <main className="main">{children}</main>

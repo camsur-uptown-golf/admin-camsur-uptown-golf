@@ -3,14 +3,14 @@ import Image from "next/image";
 import { redirect } from "next/navigation";
 import AuthForm from "@/components/AuthForm";
 import { Icon } from "@/components/icons";
-import { adminCount } from "@/lib/auth";
+import { SESSION_HOURS, adminCount } from "@/lib/auth";
 import { currentAdmin } from "@/lib/session";
 
 export const metadata: Metadata = { title: "Sign in" };
 
 export default async function LoginPage({ searchParams }: { searchParams: Promise<{ ended?: string }> }) {
   if (await currentAdmin()) redirect("/");
-  const setup = adminCount() === 0;
+  const setup = (await adminCount()) === 0;
   const { ended } = await searchParams;
 
   return (
@@ -39,7 +39,7 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
           </p>
           <AuthForm setup={setup} notice={ended ? "Your session ended. Please sign in again." : undefined} />
           <p className="auth-foot">
-            <Icon.lock size={14} /> Runs only on this computer, at localhost.
+            <Icon.lock size={14} /> Staff only. Sessions end after {SESSION_HOURS} hours.
           </p>
         </div>
       </section>

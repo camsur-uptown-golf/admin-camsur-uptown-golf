@@ -12,6 +12,6 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ ki
   const body = await readJson(request);
   const allowed: readonly string[] = STATUSES[kind];
   if (typeof body.status !== "string" || !allowed.includes(body.status)) return json({ error: "Unknown status." }, 400);
-  if (!setStatus(kind, Number(id), body.status)) return json({ error: "Not found." }, 404);
+  if (!(await setStatus(kind, Number(id), body.status))) return json({ error: "Not found." }, 404);
   return json({ ok: true });
 }
