@@ -39,8 +39,38 @@ export const SITE_DATA_DIR = path.resolve(
 const cache = globalThis as unknown as { __adminDbClients?: Map<string, Client> };
 const clients = (cache.__adminDbClients ??= new Map());
 
+/**
+ * Ang TURSO_* na galing sa Vercel o sa .env.local, nilinis: madalas sumama sa
+ * pag-paste ang espasyo o bagong linya sa dulo, ang mga quote, o ang mismong
+ * "TURSO_AUTH_TOKEN=" — at sa alinman sa mga iyon ay tinatanggihan ng Turso
+ * ang token ("Server returned HTTP status 400").
+ */
+function envValue(name: "TURSO_DATABASE_URL" | "TURSO_AUTH_TOKEN"): string | undefined {
+  let value = process.env[name]?.trim();
+  if (!value) return undefined;
+  if (value.startsWith(`${name}=`)) value = value.slice(name.length + 1).trim();
+  value = value.replace(/^(['"])(.*)\1$/, "$2").trim();
+  return value || undefined;
+}
+
+/* Minsan lang, sa unang koneksyon: makikita sa Vercel Logs kung ano ang
+   nabasa — host at haba lang, hindi ang token mismo. */
+let described = false;
+function describeTurso(url: string, token: string | undefined) {
+  if (described) return;
+  described = true;
+  let host = "(hindi URL)";
+  try {
+    host = new URL(url).host;
+  } catch {}
+  const parts = token?.split(".").length ?? 0;
+  console.info(
+    `[db] Turso: host=${host}, token=${token ? `${token.length} chars, ${parts === 3 ? "mukhang JWT" : "HINDI mukhang JWT"}` : "WALA"}`,
+  );
+}
+
 export function usingTurso(): boolean {
-  return Boolean(process.env.TURSO_DATABASE_URL);
+  return Boolean(envValue("TURSO_DATABASE_URL"));
 }
 
 /**
@@ -51,7 +81,7 @@ export function usingTurso(): boolean {
 export function db(store: "admin"): Client;
 export function db(store: SiteStore): Client | null;
 export function db(store: Store): Client | null {
-  const remote = process.env.TURSO_DATABASE_URL;
+  const remote = envValue("TURSO_DATABASE_URL");
   let url: string;
   if (remote) {
     url = remote;
@@ -66,7 +96,9 @@ export function db(store: Store): Client | null {
   }
   const existing = clients.get(url);
   if (existing) return existing;
-  const client = createClient(remote ? { url, authToken: process.env.TURSO_AUTH_TOKEN } : { url });
+  const authToken = envValue("TURSO_AUTH_TOKEN");
+  if (remote) describeTurso(url, authToken);
+  const client = createClient(remote ? { url, authToken } : { url });
   /* Lokal: sabay na sumusulat ang site, kaya maghintay nang kaunti kapag naka-lock. */
   if (!remote) client.execute("PRAGMA busy_timeout = 3000").catch(() => {});
   clients.set(url, client);
